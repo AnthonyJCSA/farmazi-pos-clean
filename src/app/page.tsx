@@ -1,50 +1,78 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-
-interface Product {
-  id: string
-  code: string
-  name: string
-  price: number
-  stock: number
-}
+import { productService, saleService, customerService, reportService } from '@/lib/database'
+import { Product, Customer } from '@/lib/supabase'
+import InventoryModule from '@/components/inventory/InventoryModule'
+import ReportsModule from '@/components/reports/ReportsModule'
 
 interface CartItem extends Product {
   quantity: number
 }
 
 export default function FarmaciaPOS() {
-  const [products] = useState<Product[]>([
-    { id: '1', code: '001', name: 'Paracetamol 500mg', price: 2.50, stock: 100 },
-    { id: '2', code: '002', name: 'Ibuprofeno 400mg', price: 3.20, stock: 50 },
-    { id: '3', code: '003', name: 'Amoxicilina 500mg', price: 8.90, stock: 25 },
-    { id: '4', code: '004', name: 'Vitamina C 1000mg', price: 15.00, stock: 80 },
-    { id: '5', code: '005', name: 'Aspirina 100mg', price: 1.80, stock: 200 },
-  ])
-
+  const [currentView, setCurrentView] = useState('pos')
+  const [products, setProducts] = useState<Product[]>([])
+  const [customers, setCustomers] = useState<Customer[]>([])
   const [cart, setCart] = useState<CartItem[]>([])
   const [searchCode, setSearchCode] = useState('')
   const [customerDoc, setCustomerDoc] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('EFECTIVO')
   const [receiptType, setReceiptType] = useState('BOLETA')
+  const [loading, setLoading] = useState(false)
+  const [stats, setStats] = useState<any>({})
   
   const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    searchRef.current?.focus()
+    loadProducts()
+    loadCustomers()
+    loadStats()
   }, [])
 
-  const handleSearch = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      const product = products.find(p => p.code === searchCode || p.name.toLowerCase().includes(searchCode.toLowerCase()))
-      
-      if (product && product.stock > 0) {
-        addToCart(product)
-        setSearchCode('')
-      } else {
-        alert('Producto no encontrado o sin stock')
+  const loadProducts = async () => {
+    try {
+      const data = await productService.getAll()
+      setProducts(data)
+    } catch (error) {
+      console.error('Error loading products:', error)
+    }
+  }
+
+  const loadCustomers = async () => {
+    try {
+      const data = await customerService.getAll()
+      setCustomers(data)
+    } catch (error) {
+      console.error('Error loading customers:', error)
+    }
+  }
+
+  const loadStats = async () => {
+    try {
+      const data = await reportService.getDashboardStats()
+      setStats(data)
+    } catch (error) {
+      console.error('Error loading stats:', error)
+    }
+  }
+
+  const handleSearch = async (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && searchCode.trim()) {
+      try {
+        const product = await productService.findByCode(searchCode) || 
+                       products.find(p => p.name.toLowerCase().includes(searchCode.toLowerCase()))
+        
+        if (product && product.stock > 0) {
+          addToCart(product)
+          setSearchCode('')
+        } else {
+          alert('Producto no encontrado o sin stock')
+          setSearchCode('')
+        }
+      } catch (error) {
+        alert('Error al buscar producto')
         setSearchCode('')
       }
     }
@@ -85,61 +113,85 @@ export default function FarmaciaPOS() {
     }
   }
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
-  const igv = subtotal * 0.18
-  const total = subtotal + igv
-
-  const processSale = () => {
+  const processSale = async () => {
     if (cart.length === 0) {
       alert('Carrito vacío')
       return
     }
 
-    const saleData = {
-      type: receiptType,
-      number: `${receiptType}-${Date.now()}`,
-      date: new Date().toLocaleString('es-PE'),
-      customer: {
-        doc: customerDoc || '00000000',
-        name: customerName || 'Cliente General'
-      },
-      items: cart,
-      subtotal: subtotal.toFixed(2),
-      igv: igv.toFixed(2),
-      total: total.toFixed(2),
-      payment: paymentMethod
-    }
+    setLoading(true)
+    try {
+      let customer = null
+      if (customerDoc) {
+        customer = await customerService.findByDocument(customerDoc)
+        if (!customer && customerName) {
+          customer = await customerService.create({
+            document_type: 'DNI',
+            document_number: customerDoc,
+            name: customerName
+          })
+        }
+      }
 
-    printReceipt(saleData)
-    
-    setCart([])
-    setCustomerDoc('')
-    setCustomerName('')
-    searchRef.current?.focus()
+      const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+      const igv = subtotal * 0.18
+      const total = subtotal + igv
+
+      const sale = await saleService.create({
+        customer_id: customer?.id,
+        receipt_type: receiptType,
+        subtotal,
+        igv,
+        total,
+        payment_method: paymentMethod,
+        items: cart.map(item => ({
+          product_id: item.id,
+          quantity: item.quantity,
+          unit_price: item.price,
+          subtotal: item.price * item.quantity
+        }))
+      })
+
+      printReceipt(sale, customer, cart, { subtotal, igv, total })
+      
+      setCart([])
+      setCustomerDoc('')
+      setCustomerName('')
+      await loadProducts()
+      await loadStats()
+      searchRef.current?.focus()
+      
+      alert('Venta procesada exitosamente')
+    } catch (error) {
+      console.error('Error processing sale:', error)
+      alert('Error al procesar la venta')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const printReceipt = (sale: any) => {
+  const printReceipt = (sale: any, customer: any, items: CartItem[], totals: any) => {
     const receipt = `
 ═══════════════════════════════════
            FARMACIA SALUD
 ═══════════════════════════════════
-${sale.type}: ${sale.number}
-Fecha: ${sale.date}
+${sale.receipt_type}: ${sale.sale_number}
+Fecha: ${new Date().toLocaleString('es-PE')}
 ───────────────────────────────────
-Cliente: ${sale.customer.name}
-Doc: ${sale.customer.doc}
+Cliente: ${customer?.name || 'Cliente General'}
+Doc: ${customer?.document_number || '00000000'}
 ───────────────────────────────────
 PRODUCTOS:
-${sale.items.map((item: CartItem) => 
+${items.map(item => 
   `${item.name}
   ${item.quantity} x S/ ${item.price.toFixed(2)} = S/ ${(item.quantity * item.price).toFixed(2)}`
 ).join('\n')}
 ───────────────────────────────────
-Subtotal:        S/ ${sale.subtotal}
-IGV (18%):       S/ ${sale.igv}
-TOTAL:           S/ ${sale.total}
+Subtotal:        S/ ${totals.subtotal.toFixed(2)}
+IGV (18%):       S/ ${totals.igv.toFixed(2)}
+TOTAL:           S/ ${totals.total.toFixed(2)}
 ───────────────────────────────────
-Pago: ${sale.payment}
+Pago: ${sale.payment_method}
 ───────────────────────────────────
         ¡GRACIAS POR SU COMPRA!
 ═══════════════════════════════════`
@@ -161,6 +213,8 @@ Pago: ${sale.payment}
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      if (currentView !== 'pos') return
+      
       if (e.key === 'F1') {
         e.preventDefault()
         setCart([])
@@ -182,77 +236,30 @@ Pago: ${sale.payment}
 
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
-  }, [cart])
+  }, [cart, currentView])
 
   const styles = {
-    container: {
-      minHeight: '100vh',
-      backgroundColor: '#f3f4f6',
-      padding: '16px'
-    },
-    maxWidth: {
-      maxWidth: '1280px',
-      margin: '0 auto'
-    },
-    header: {
-      backgroundColor: '#2563eb',
-      color: 'white',
-      padding: '16px',
-      borderRadius: '8px 8px 0 0'
-    },
-    content: {
-      backgroundColor: 'white',
-      borderRadius: '0 0 8px 8px',
-      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-      padding: '24px'
-    },
-    grid: {
-      display: 'grid',
-      gridTemplateColumns: '2fr 1fr',
-      gap: '24px'
-    },
-    input: {
-      width: '100%',
-      padding: '12px',
-      fontSize: '18px',
-      border: '2px solid #93c5fd',
-      borderRadius: '4px',
-      outline: 'none'
-    },
-    productGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-      gap: '12px',
-      marginTop: '16px'
-    },
-    productCard: {
-      padding: '12px',
-      border: '1px solid #d1d5db',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      backgroundColor: 'white'
-    },
-    sidebar: {
-      backgroundColor: '#f9fafb',
-      padding: '16px',
-      borderRadius: '4px'
-    },
-    button: {
-      width: '100%',
-      padding: '12px',
-      borderRadius: '4px',
-      border: 'none',
-      cursor: 'pointer',
-      fontWeight: 'bold'
-    },
-    buttonPrimary: {
-      backgroundColor: '#16a34a',
-      color: 'white'
-    },
-    buttonSecondary: {
-      backgroundColor: '#dc2626',
-      color: 'white'
-    }
+    container: { minHeight: '100vh', backgroundColor: '#f3f4f6', padding: '16px' },
+    maxWidth: { maxWidth: '1280px', margin: '0 auto' },
+    header: { backgroundColor: '#2563eb', color: 'white', padding: '16px', borderRadius: '8px 8px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+    content: { backgroundColor: 'white', borderRadius: '0 0 8px 8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '24px' },
+    grid: { display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' },
+    input: { width: '100%', padding: '12px', fontSize: '18px', border: '2px solid #93c5fd', borderRadius: '4px', outline: 'none' },
+    productGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '12px', marginTop: '16px' },
+    productCard: { padding: '12px', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer', backgroundColor: 'white' },
+    sidebar: { backgroundColor: '#f9fafb', padding: '16px', borderRadius: '4px' },
+    button: { padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 'bold', margin: '0 4px' },
+    buttonPrimary: { backgroundColor: '#16a34a', color: 'white' },
+    buttonSecondary: { backgroundColor: '#dc2626', color: 'white' },
+    navButton: { backgroundColor: 'white', color: '#2563eb', padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer', margin: '0 4px' }
+  }
+
+  if (currentView === 'inventory') {
+    return <InventoryModule onBack={() => setCurrentView('pos')} onProductsChange={loadProducts} />
+  }
+
+  if (currentView === 'reports') {
+    return <ReportsModule onBack={() => setCurrentView('pos')} />
   }
 
   return (
@@ -260,8 +267,44 @@ Pago: ${sale.payment}
       <div style={styles.maxWidth}>
         
         <div style={styles.header}>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>💊 FARMACIA POS</h1>
-          <p style={{ fontSize: '14px', margin: '4px 0 0 0' }}>F1: Nueva Venta | F2: Procesar | ESC: Limpiar</p>
+          <div>
+            <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>💊 FARMACIA POS - SUPABASE</h1>
+            <p style={{ fontSize: '14px', margin: '4px 0 0 0' }}>F1: Nueva Venta | F2: Procesar | ESC: Limpiar</p>
+          </div>
+          <div>
+            <button
+              onClick={() => setCurrentView('inventory')}
+              style={styles.navButton}
+            >
+              📦 Inventario
+            </button>
+            <button
+              onClick={() => setCurrentView('reports')}
+              style={styles.navButton}
+            >
+              📊 Reportes
+            </button>
+          </div>
+        </div>
+
+        {/* Stats Dashboard */}
+        <div style={{ backgroundColor: 'white', padding: '16px', margin: '16px 0', borderRadius: '8px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 8px 0', color: '#16a34a' }}>Ventas Hoy</h3>
+            <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>S/ {stats.todaySales?.toFixed(2) || '0.00'}</p>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 8px 0', color: '#2563eb' }}>Productos</h3>
+            <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>{stats.totalProducts || 0}</p>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 8px 0', color: '#7c3aed' }}>Clientes</h3>
+            <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>{stats.totalCustomers || 0}</p>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 8px 0', color: '#dc2626' }}>Stock Bajo</h3>
+            <p style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>{stats.lowStockCount || 0}</p>
+          </div>
         </div>
 
         <div style={styles.content}>
@@ -300,15 +343,19 @@ Pago: ${sale.payment}
                         <p style={{ fontWeight: 'bold', fontSize: '14px', margin: '0 0 4px 0' }}>
                           [{product.code}] {product.name}
                         </p>
-                        <p style={{ color: '#2563eb', fontWeight: 'bold', margin: 0 }}>
+                        <p style={{ color: '#2563eb', fontWeight: 'bold', margin: '0 0 4px 0' }}>
                           S/ {product.price.toFixed(2)}
                         </p>
+                        {product.category && (
+                          <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>{product.category}</p>
+                        )}
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ 
                           fontSize: '14px', 
                           margin: 0,
-                          color: product.stock > 10 ? '#16a34a' : product.stock > 0 ? '#ca8a04' : '#dc2626'
+                          color: product.stock > product.min_stock ? '#16a34a' : 
+                                 product.stock > 0 ? '#ca8a04' : '#dc2626'
                         }}>
                           Stock: {product.stock}
                         </p>
@@ -417,11 +464,11 @@ Pago: ${sale.payment}
                 <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: 'white', borderRadius: '4px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
                     <span>Subtotal:</span>
-                    <span>S/ {subtotal.toFixed(2)}</span>
+                    <span>S/ {cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
                     <span>IGV (18%):</span>
-                    <span>S/ {igv.toFixed(2)}</span>
+                    <span>S/ {(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) * 0.18).toFixed(2)}</span>
                   </div>
                   <div style={{ 
                     display: 'flex', 
@@ -433,7 +480,7 @@ Pago: ${sale.payment}
                     marginTop: '8px'
                   }}>
                     <span>TOTAL:</span>
-                    <span>S/ {total.toFixed(2)}</span>
+                    <span>S/ {(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) * 1.18).toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -455,14 +502,20 @@ Pago: ${sale.payment}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <button
                   onClick={processSale}
-                  disabled={cart.length === 0}
+                  disabled={cart.length === 0 || loading}
                   style={{
-                    ...styles.button,
-                    ...styles.buttonPrimary,
-                    opacity: cart.length === 0 ? 0.5 : 1
+                    width: '100%',
+                    padding: '12px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    backgroundColor: '#16a34a',
+                    color: 'white',
+                    opacity: cart.length === 0 || loading ? 0.5 : 1
                   }}
                 >
-                  🖨️ PROCESAR VENTA (F2)
+                  {loading ? '⏳ Procesando...' : '🖨️ PROCESAR VENTA (F2)'}
                 </button>
                 
                 <button
@@ -473,8 +526,14 @@ Pago: ${sale.payment}
                     searchRef.current?.focus()
                   }}
                   style={{
-                    ...styles.button,
-                    ...styles.buttonSecondary
+                    width: '100%',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    backgroundColor: '#dc2626',
+                    color: 'white'
                   }}
                 >
                   🗑️ LIMPIAR (F1)
