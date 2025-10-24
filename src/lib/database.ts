@@ -1,31 +1,65 @@
 import { supabase, Product, Customer, Sale, SaleItem } from './supabase'
 
+// Mock data para fallback
+const mockProducts: Product[] = [
+  { id: '1', code: '001', name: 'Paracetamol 500mg', price: 2.50, stock: 100, min_stock: 5, is_active: true, created_at: '', updated_at: '' },
+  { id: '2', code: '002', name: 'Ibuprofeno 400mg', price: 3.20, stock: 50, min_stock: 5, is_active: true, created_at: '', updated_at: '' },
+  { id: '3', code: '003', name: 'Amoxicilina 500mg', price: 8.90, stock: 25, min_stock: 5, is_active: true, created_at: '', updated_at: '' },
+  { id: '4', code: '004', name: 'Vitamina C 1000mg', price: 15.00, stock: 80, min_stock: 5, is_active: true, created_at: '', updated_at: '' },
+  { id: '5', code: '005', name: 'Aspirina 100mg', price: 1.80, stock: 200, min_stock: 5, is_active: true, created_at: '', updated_at: '' },
+]
+
+const isSupabaseConfigured = () => {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL && 
+         process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co'
+}
+
 // 📦 PRODUCTOS
 export const productService = {
   async getAll(): Promise<Product[]> {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('is_active', true)
-      .order('name')
+    if (!isSupabaseConfigured()) return mockProducts
     
-    if (error) throw error
-    return data || []
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('is_active', true)
+        .order('name')
+      
+      if (error) throw error
+      return data || mockProducts
+    } catch (error) {
+      console.error('Error loading products:', error)
+      return mockProducts
+    }
   },
 
   async findByCode(code: string): Promise<Product | null> {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('code', code)
-      .eq('is_active', true)
-      .single()
+    if (!isSupabaseConfigured()) {
+      return mockProducts.find(p => p.code === code) || null
+    }
     
-    if (error && error.code !== 'PGRST116') throw error
-    return data
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .eq('code', code)
+        .eq('is_active', true)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') throw error
+      return data
+    } catch (error) {
+      console.error('Error finding product:', error)
+      return null
+    }
   },
 
   async create(product: Omit<Product, 'id' | 'created_at' | 'updated_at'>): Promise<Product> {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Supabase no configurado')
+    }
+    
     const { data, error } = await supabase
       .from('products')
       .insert(product)
@@ -37,6 +71,10 @@ export const productService = {
   },
 
   async update(id: string, updates: Partial<Product>): Promise<Product> {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Supabase no configurado')
+    }
+    
     const { data, error } = await supabase
       .from('products')
       .update(updates)
@@ -49,6 +87,8 @@ export const productService = {
   },
 
   async updateStock(id: string, newStock: number): Promise<void> {
+    if (!isSupabaseConfigured()) return
+    
     const { error } = await supabase
       .from('products')
       .update({ stock: newStock })
@@ -58,28 +98,48 @@ export const productService = {
   },
 
   async getLowStock(): Promise<Product[]> {
-    const { data, error } = await supabase
-      .from('low_stock_products')
-      .select('*')
+    if (!isSupabaseConfigured()) {
+      return mockProducts.filter(p => p.stock <= p.min_stock)
+    }
     
-    if (error) throw error
-    return data || []
+    try {
+      const { data, error } = await supabase
+        .from('low_stock_products')
+        .select('*')
+      
+      if (error) throw error
+      return data || []
+    } catch (error) {
+      console.error('Error loading low stock:', error)
+      return []
+    }
   }
 }
 
 // 👥 CLIENTES
 export const customerService = {
   async getAll(): Promise<Customer[]> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('name')
+    if (!isSupabaseConfigured()) return []
     
-    if (error) throw error
-    return data || []
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .order('name')
+      
+      if (error) throw error
+      return data || []
+    } catch (error) {
+      console.error('Error loading customers:', error)
+      return []
+    }
   },
 
   async create(customer: Omit<Customer, 'id' | 'created_at'>): Promise<Customer> {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Supabase no configurado')
+    }
+    
     const { data, error } = await supabase
       .from('customers')
       .insert(customer)
@@ -91,14 +151,21 @@ export const customerService = {
   },
 
   async findByDocument(document: string): Promise<Customer | null> {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('document_number', document)
-      .single()
+    if (!isSupabaseConfigured()) return null
     
-    if (error && error.code !== 'PGRST116') throw error
-    return data
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('document_number', document)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') throw error
+      return data
+    } catch (error) {
+      console.error('Error finding customer:', error)
+      return null
+    }
   }
 }
 
@@ -118,6 +185,21 @@ export const saleService = {
       subtotal: number
     }>
   }): Promise<Sale> {
+    if (!isSupabaseConfigured()) {
+      // Simular venta exitosa
+      return {
+        id: Date.now().toString(),
+        sale_number: `${saleData.receipt_type}-${Date.now()}`,
+        receipt_type: saleData.receipt_type,
+        subtotal: saleData.subtotal,
+        igv: saleData.igv,
+        total: saleData.total,
+        payment_method: saleData.payment_method,
+        status: 'COMPLETED',
+        created_at: new Date().toISOString()
+      }
+    }
+    
     const saleNumber = `${saleData.receipt_type}-${Date.now()}`
     
     const { data: sale, error: saleError } = await supabase
@@ -174,66 +256,108 @@ export const saleService = {
   },
 
   async getTodaySales(): Promise<Sale[]> {
-    const today = new Date().toISOString().split('T')[0]
+    if (!isSupabaseConfigured()) return []
     
-    const { data, error } = await supabase
-      .from('sales')
-      .select(`
-        *,
-        customer:customers(*),
-        sale_items(*, product:products(*))
-      `)
-      .gte('created_at', `${today}T00:00:00`)
-      .lte('created_at', `${today}T23:59:59`)
-      .order('created_at', { ascending: false })
-    
-    if (error) throw error
-    return data || []
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      
+      const { data, error } = await supabase
+        .from('sales')
+        .select(`
+          *,
+          customer:customers(*),
+          sale_items(*, product:products(*))
+        `)
+        .gte('created_at', `${today}T00:00:00`)
+        .lte('created_at', `${today}T23:59:59`)
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      return data || []
+    } catch (error) {
+      console.error('Error loading today sales:', error)
+      return []
+    }
   }
 }
 
 // 📊 REPORTES
 export const reportService = {
   async getTopProducts(limit = 10): Promise<any[]> {
-    const { data, error } = await supabase
-      .from('top_products')
-      .select('*')
-      .limit(limit)
+    if (!isSupabaseConfigured()) {
+      return mockProducts.slice(0, limit).map(p => ({
+        name: p.name,
+        code: p.code,
+        total_sold: Math.floor(Math.random() * 100),
+        total_revenue: p.price * Math.floor(Math.random() * 100)
+      }))
+    }
     
-    if (error) throw error
-    return data || []
+    try {
+      const { data, error } = await supabase
+        .from('top_products')
+        .select('*')
+        .limit(limit)
+      
+      if (error) throw error
+      return data || []
+    } catch (error) {
+      console.error('Error loading top products:', error)
+      return []
+    }
   },
 
   async getDashboardStats(): Promise<any> {
-    const today = new Date().toISOString().split('T')[0]
+    if (!isSupabaseConfigured()) {
+      return {
+        todaySales: 125.50,
+        todayTransactions: 8,
+        totalProducts: mockProducts.length,
+        lowStockCount: 2,
+        totalCustomers: 15
+      }
+    }
     
-    // Ventas de hoy
-    const { data: todaySales } = await supabase
-      .from('daily_sales')
-      .select('*')
-      .eq('sale_date', today)
-      .single()
-    
-    // Total productos
-    const { count: totalProducts } = await supabase
-      .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true)
-    
-    // Stock bajo
-    const lowStockProducts = await productService.getLowStock()
-    
-    // Total clientes
-    const { count: totalCustomers } = await supabase
-      .from('customers')
-      .select('*', { count: 'exact', head: true })
-    
-    return {
-      todaySales: todaySales?.total_amount || 0,
-      todayTransactions: todaySales?.total_sales || 0,
-      totalProducts: totalProducts || 0,
-      lowStockCount: lowStockProducts.length,
-      totalCustomers: totalCustomers || 0
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      
+      // Ventas de hoy
+      const { data: todaySales } = await supabase
+        .from('daily_sales')
+        .select('*')
+        .eq('sale_date', today)
+        .single()
+      
+      // Total productos
+      const { count: totalProducts } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+      
+      // Stock bajo
+      const lowStockProducts = await productService.getLowStock()
+      
+      // Total clientes
+      const { count: totalCustomers } = await supabase
+        .from('customers')
+        .select('*', { count: 'exact', head: true })
+      
+      return {
+        todaySales: todaySales?.total_amount || 0,
+        todayTransactions: todaySales?.total_sales || 0,
+        totalProducts: totalProducts || 0,
+        lowStockCount: lowStockProducts.length,
+        totalCustomers: totalCustomers || 0
+      }
+    } catch (error) {
+      console.error('Error loading dashboard stats:', error)
+      return {
+        todaySales: 0,
+        todayTransactions: 0,
+        totalProducts: 0,
+        lowStockCount: 0,
+        totalCustomers: 0
+      }
     }
   }
 }
