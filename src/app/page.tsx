@@ -121,8 +121,12 @@ export default function FarmaciaPOS() {
 
     setLoading(true)
     try {
+      // Verificar si Supabase está configurado
+      const isConfigured = process.env.NEXT_PUBLIC_SUPABASE_URL && 
+                          process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co'
+      
       let customer = null
-      if (customerDoc) {
+      if (customerDoc && isConfigured) {
         customer = await customerService.findByDocument(customerDoc)
         if (!customer && customerName) {
           customer = await customerService.create({
@@ -161,10 +165,14 @@ export default function FarmaciaPOS() {
       await loadStats()
       searchRef.current?.focus()
       
-      alert('Venta procesada exitosamente')
+      if (isConfigured) {
+        alert('✅ Venta procesada exitosamente')
+      } else {
+        alert('✅ Venta simulada exitosamente\n\n⚠️ Para ventas reales, configure Supabase en Vercel:\n- NEXT_PUBLIC_SUPABASE_URL\n- NEXT_PUBLIC_SUPABASE_ANON_KEY')
+      }
     } catch (error) {
       console.error('Error processing sale:', error)
-      alert('Error al procesar la venta')
+      alert('❌ Error al procesar la venta: ' + (error as Error).message)
     } finally {
       setLoading(false)
     }
@@ -178,8 +186,8 @@ export default function FarmaciaPOS() {
 ${sale.receipt_type}: ${sale.sale_number}
 Fecha: ${new Date().toLocaleString('es-PE')}
 ───────────────────────────────────
-Cliente: ${customer?.name || 'Cliente General'}
-Doc: ${customer?.document_number || '00000000'}
+Cliente: ${customer?.name || customerName || 'Cliente General'}
+Doc: ${customer?.document_number || customerDoc || '00000000'}
 ───────────────────────────────────
 PRODUCTOS:
 ${items.map(item => 
@@ -268,7 +276,7 @@ Pago: ${sale.payment_method}
         
         <div style={styles.header}>
           <div>
-            <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>💊 FARMACIA POS - SUPABASE</h1>
+            <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>💊 FARMACIA POS</h1>
             <p style={{ fontSize: '14px', margin: '4px 0 0 0' }}>F1: Nueva Venta | F2: Procesar | ESC: Limpiar</p>
           </div>
           <div>

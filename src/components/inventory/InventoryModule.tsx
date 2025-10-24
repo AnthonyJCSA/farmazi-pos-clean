@@ -56,6 +56,16 @@ export default function InventoryModule({ onBack, onProductsChange }: InventoryM
     setLoading(true)
 
     try {
+      // Verificar si Supabase está configurado
+      const isConfigured = process.env.NEXT_PUBLIC_SUPABASE_URL && 
+                          process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co'
+      
+      if (!isConfigured) {
+        alert('⚠️ Supabase no configurado. Agregue las variables de entorno en Vercel:\n\nNEXT_PUBLIC_SUPABASE_URL\nNEXT_PUBLIC_SUPABASE_ANON_KEY')
+        setLoading(false)
+        return
+      }
+
       const productData = {
         code: formData.code,
         name: formData.name,
@@ -70,10 +80,10 @@ export default function InventoryModule({ onBack, onProductsChange }: InventoryM
 
       if (editingProduct) {
         await productService.update(editingProduct.id, productData)
-        alert('Producto actualizado exitosamente')
+        alert('✅ Producto actualizado exitosamente')
       } else {
         await productService.create(productData as any)
-        alert('Producto creado exitosamente')
+        alert('✅ Producto creado exitosamente')
       }
 
       setFormData({
@@ -86,7 +96,7 @@ export default function InventoryModule({ onBack, onProductsChange }: InventoryM
       onProductsChange()
     } catch (error) {
       console.error('Error saving product:', error)
-      alert('Error al guardar producto')
+      alert('❌ Error al guardar producto: ' + (error as Error).message)
     } finally {
       setLoading(false)
     }
@@ -109,14 +119,22 @@ export default function InventoryModule({ onBack, onProductsChange }: InventoryM
 
   const handleStockUpdate = async (productId: string, newStock: number) => {
     try {
+      const isConfigured = process.env.NEXT_PUBLIC_SUPABASE_URL && 
+                          process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://placeholder.supabase.co'
+      
+      if (!isConfigured) {
+        alert('⚠️ Supabase no configurado para actualizar stock')
+        return
+      }
+
       await productService.updateStock(productId, newStock)
       await loadProducts()
       await loadLowStock()
       onProductsChange()
-      alert('Stock actualizado')
+      alert('✅ Stock actualizado')
     } catch (error) {
       console.error('Error updating stock:', error)
-      alert('Error al actualizar stock')
+      alert('❌ Error al actualizar stock')
     }
   }
 
